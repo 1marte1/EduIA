@@ -1,0 +1,181 @@
+"""
+video_service.py
+Orquesta la generación de video llamando al servidor Remotion.
+
+Recibe el JSON del guión (de ai_service) y las rutas de los
+audios (de tts_service) y devuelve la ruta del MP4 generado.
+"""
+
+import os
+import time
+import json
+import logging
+import requests
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+REMOTION_SERVER_URL = os.getenv("REMOTION_SERVER_URL", "http://localhost:3001")
+OUTPUT_DIR = Path(os.getenv("VIDEO_OUTPUT_DIR", "outputs/videos"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
+class VideoService:
+    def __init__(self, server_url: str = REMOTION_SERVER_URL):
+        self.server_url = server_url
+
+    # ------------------------------------------------------------------
+    # Método principal
+    # ------------------------------------------------------------------
+    def generate_video(
+        self,
+        script: dict,
+        audio_paths: dict,
+        output_name: Optional[str] = None,
+    ) -> str:
+        """
+        Genera un video a partir del guión y los audios.
+
+        Args:
+            script: dict con la estructura del guión de Gemini.
+                    Se espera:
+                    {
+                        "title": str,
+                        "introduccion": {"text": str, "duration": int},
+                        "explicacion":  {"text": str, "duration": int},
+                        "ejemplo":      {"text": str, "duration": int,
+                                         "charts": [...] (opcional)},
+                        "conclusion":   {"text": str, "duration": int},
+                    }
+            audio_paths: dict con rutas absolutas a los MP3:
+                    {
+                        "introduccion": "/path/to/intro.mp3",
+                        "explicacion":  "/path/to/explicacion.mp3",
+                        "ejemplo":      "/path/to/ejemplo.mp3",
+                        "conclusion":   "/path/to/conclusion.mp3",
+                    }
+            output_name: nombre del archivo MP4 de salida (opcional).
+
+        Returns:
+            Ruta absoluta al video MP4 generado.
+        """
+        if not output_name:
+            timestamp = int(time.time())
+            safe_title = script.get("title", "video").replace(" ", "_")[:30]
+            output_name = f"{safe_title}_{timestamp}.mp4"
+
+        # Verificar que el servidor Remotion está disponible
+        self._check_server_health()
+
+        # Construir payload para Remotion
+        payload = self._build_payload(script, audio_paths, output_name)
+
+        logger.info(f"Enviando request de render a Remotion: {output_name}")
+        start = time.time()
+
+        response = requests.post(
+            f"{self.server_url}/render",
+            json=payload,
+            timeout=600,  # 10 min timeout para renders largos
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        if not result.get("success"):
+            raise RuntimeError(f"Error en Remotion render: {result.get('error')}")
+
+        elapsed = time.time() - start
+        output_path = result["outputPath"]
+        logger.info(f"Video generado en {elapsed:.1f}s: {output_path}")
+
+        return output_path
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _check_server_health(self) -> None:
+        """Verifica que el servidor Remotion esté corriendo."""
+        try:
+            r = requests.get(f"{self.server_url}/health", timeout=5)
+            r.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError(
+                f"El servidor Remotion no está disponible en {self.server_url}.\n"
+                "Asegúrate de correr: npm run server (en el directorio remotion/)"
+            )
+
+    def _build_payload(self, script: dict, audio_paths: dict, output_name: str) -> dict:
+         # Convertir rutas locales a URLs HTTP
+        http_audio_paths = {}
+        for key, path in audio_paths.items():
+            if path:
+                filename = Path(path).name  # ej: "introduccion.mp3"
+                http_audio_paths[key] = f"{BACKEND_URL}/audio/{filename}"
+            else:
+                http_audio_paths[key] = ""
+            
+        """
+        Convierte el JSON de Gemini al formato que espera Remotion.
+
+        El guión de Gemini puede venir con duraciones en segundos.
+        Si no vienen, se estiman por longitud del texto.
+        """
+        sections = {}
+        for key in ["introduccion", "explicacion", "ejemplo", "conclusion"]:
+            section_data = script.get(key, {})
+
+            if isinstance(section_data, str):
+                text = section_data
+                data = {"text": text}
+            else:
+                text = section_data.get("text", section_data.get("contenido", ""))
+                data = dict(section_data)
+                data["text"] = text
+
+            if "duration" not in data:
+                words = len(text.split())
+                data["duration"] = max(8, int(words * 0.46))
+
+            if key == "ejemplo" and "charts" not in data:
+                data["charts"] = self._extract_charts_from_script(script)
+
+            sections[key] = data
+
+       
+
+        return {
+            "title": script.get("title", script.get("tema", "Sin título")),
+            "sections": sections,
+            "audioPaths": http_audio_paths,  # ← rutas absolutas
+            "outputName": output_name,
+        }
+
+    def _extract_charts_from_script(self, script: dict) -> list:
+        """
+        Si el JSON de Gemini incluye datos numéricos en el ejemplo,
+        los extrae como configuración de gráfica para Recharts.
+
+        Si Gemini no incluye datos explícitos, devuelve lista vacía
+        (el ExampleScene mostrará solo el texto).
+        """
+        charts = []
+
+        # Buscar clave "datos" o "grafica" que Gemini pueda incluir
+        ejemplo = script.get("ejemplo", {})
+        if isinstance(ejemplo, dict):
+            raw_charts = ejemplo.get("datos", ejemplo.get("grafica", []))
+            if isinstance(raw_charts, list):
+                charts = raw_charts
+
+        return charts
+
+
+# ------------------------------------------------------------------
+# Función de conveniencia para usar directamente desde routes/video.py
+# ------------------------------------------------------------------
+_service = VideoService()
+
+
+def generate_video(script: dict, audio_paths: dict, output_name: str = None) -> str:
+    return _service.generate_video(script, audio_paths, output_name)
