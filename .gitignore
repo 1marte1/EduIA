@@ -44,6 +44,7 @@ ENV/
 .remotion
 outputs/*.mp4
 outputs/videos/
+output/
 
 # Logs
 npm-debug.log*
