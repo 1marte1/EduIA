@@ -6,8 +6,9 @@
     "dev": "vite",
     "build": "vite build",
     "remotion:start": "remotion preview src/video/index.ts",
-    "server": "ts-node server/renderServer.ts",
-    "server:dev": "nodemon --exec ts-node server/renderServer.ts"
+    "server": "npm run server:dev",
+    "server:dev": "nodemon --watch src --watch server -e ts,tsx,js,jsx --exec ts-node server/renderServer.ts",
+    "server:prod": "ts-node server/renderServer.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

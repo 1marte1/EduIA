@@ -61,6 +61,8 @@ interface RenderRequest {
     ejemplo: string;
     conclusion: string;
   };
+  templateId?: string;
+  orientation?: "horizontal" | "vertical";
   outputName?: string;
 }
 
@@ -81,22 +83,30 @@ app.post("/render", async (req, res) => {
         body.sections.conclusion.duration) *
       fps;
 
+    const isVertical = body.orientation === "vertical";
+    const width = isVertical ? 720 : 1280;
+    const height = isVertical ? 1280 : 720;
+
     const inputProps = {
       script: {
         title: body.title,
         sections: body.sections,
       },
       audioPaths: body.audioPaths,
+      templateId: body.templateId || "academic",
+      orientation: body.orientation || "horizontal",
     };
 
     const composition = await selectComposition({
       serveUrl,
-      id: "EngineeringVideo",
+      id: "VideoComposition",
       inputProps,
     });
 
-    // Sobrescribir duración calculada
+    // Sobrescribir propiedades
     composition.durationInFrames = totalFrames;
+    composition.width = width;
+    composition.height = height;
 
     await renderMedia({
       composition,
@@ -106,7 +116,9 @@ app.post("/render", async (req, res) => {
       inputProps,
       timeoutInMilliseconds: 300_000,
       onProgress: ({ progress }) => {
-        process.stdout.write(`\rRender progress: ${Math.round(progress * 100)}%`);
+        process.stdout.write(
+          `\rRender progress: ${Math.round(progress * 100)}%`,
+        );
       },
     });
 

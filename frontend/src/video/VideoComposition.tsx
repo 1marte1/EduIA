@@ -32,8 +32,9 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
   script,
   audioPaths,
   templateId = "academic",
+  orientation = "horizontal",
 }) => {
-  const props = { script, audioPaths };
+  const props = { script, audioPaths, orientation };
 
   switch (templateId) {
     case "minimalist":
