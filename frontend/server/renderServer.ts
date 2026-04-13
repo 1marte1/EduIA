@@ -41,7 +41,7 @@ async function getBundled() {
 
 interface RenderRequest {
   title: string;
-  sections: {
+  sections?: {
     introduccion: { text: string; duration: number };
     explicacion: { text: string; duration: number };
     ejemplo: {
@@ -55,12 +55,13 @@ interface RenderRequest {
     };
     conclusion: { text: string; duration: number };
   };
-  audioPaths: {
-    introduccion: string;
-    explicacion: string;
-    ejemplo: string;
-    conclusion: string;
-  };
+  scenes?: Array<{
+    id: string;
+    type: string;
+    duration: number;
+    [key: string]: any;
+  }>;
+  audioPaths: Record<string, string>;
   templateId?: string;
   orientation?: "horizontal" | "vertical";
   outputName?: string;
@@ -76,12 +77,18 @@ app.post("/render", async (req, res) => {
 
     // Calcular duración total en frames (30fps)
     const fps = 30;
-    const totalFrames =
-      (body.sections.introduccion.duration +
+    let totalFrames = 600;
+    if (body.scenes) {
+      const totalSecs = body.scenes.reduce((acc, scene) => acc + (scene.duration || 10), 0);
+      totalFrames = Math.ceil(totalSecs * fps);
+    } else if (body.sections) {
+      const totalSecs =
+        body.sections.introduccion.duration +
         body.sections.explicacion.duration +
         body.sections.ejemplo.duration +
-        body.sections.conclusion.duration) *
-      fps;
+        body.sections.conclusion.duration;
+      totalFrames = Math.ceil(totalSecs * fps);
+    }
 
     const isVertical = body.orientation === "vertical";
     const width = isVertical ? 720 : 1280;
@@ -91,6 +98,7 @@ app.post("/render", async (req, res) => {
       script: {
         title: body.title,
         sections: body.sections,
+        scenes: body.scenes,
       },
       audioPaths: body.audioPaths,
       templateId: body.templateId || "academic",
